@@ -10,11 +10,14 @@ import requests
 import functions_framework
 import threading
 import time
+from google.cloud import bigquery
 
 SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")
 AUTO_SEND_ENABLED = os.getenv("AUTO_SEND_ENABLED", "true").lower() == "true"
 AUTO_SEND_INTERVAL_SEC = int(os.getenv("AUTO_SEND_INTERVAL_SEC", "60"))
 AUTO_SEND_TEXT = os.getenv("AUTO_SEND_TEXT", "Hello from Cloud Run Functions! 🚀 (auto)")
+BQ_VIEW = os.getenv("BQ_VIEW", "barber-project-d75f8.teste_slack.calculo_outliers")
+BQ_LOOKBACK_DAYS = int(os.getenv("BQ_LOOKBACK_DAYS", "10"))
 
 
 def send_slack(text: str):
@@ -32,11 +35,48 @@ def slack_notify(request):
     return {"status": "alive", "auto_send_enabled": AUTO_SEND_ENABLED}, 200
 
 
+def fetch_outliers():
+    """Query BigQuery view for outliers in the lookback window."""
+    client = bigquery.Client()
+    sql = f"""
+    SELECT *
+    FROM `{BQ_VIEW}`
+    WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL @days DAY)
+    ORDER BY date DESC
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("days", "INT64", BQ_LOOKBACK_DAYS)
+        ]
+    )
+    rows = client.query(sql, job_config=job_config).result()
+    schema_fields = [f.name for f in rows.schema]
+    flag_cols = [c for c in schema_fields if c.startswith("is_outlier_")]
+    results = []
+    for row in rows:
+        metrics = [c.replace("is_outlier_", "") for c in flag_cols if getattr(row, c)]
+        if metrics:
+            results.append({"date": row.date, "metrics": metrics})
+    return results
+
+
+def format_outlier_message(outliers):
+    if not outliers:
+        return f"Nenhum outlier nos últimos {BQ_LOOKBACK_DAYS} dias."
+    lines = [f"Outliers (últimos {BQ_LOOKBACK_DAYS} dias):"]
+    for item in outliers:
+        metrics_list = ", ".join(item["metrics"])
+        lines.append(f"- {item['date']}: {metrics_list}")
+    return "\n".join(lines)
+
+
 def _auto_loop():
     """Background loop to send a Slack message periodically."""
     while True:
         try:
-            send_slack(AUTO_SEND_TEXT)
+            outliers = fetch_outliers()
+            text = format_outlier_message(outliers)
+            send_slack(text)
         except Exception as exc:
             # Log to stdout; Cloud Run captures logs
             print(f"[auto-loop] error sending slack: {exc}", flush=True)
