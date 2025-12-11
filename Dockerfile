@@ -12,4 +12,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Expose Functions Framework HTTP target slack_notify
-CMD ["functions-framework", "--target=slack_notify", "--port=8080"]
+CMD ["functions-framework", "--target=slack_notify"]
