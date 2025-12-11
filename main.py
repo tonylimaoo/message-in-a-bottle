@@ -8,8 +8,13 @@ Handles GET (mensagem padrão) e POST com JSON {"text": "..."}.
 import os
 import requests
 import functions_framework
+import threading
+import time
 
 SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")
+AUTO_SEND_ENABLED = os.getenv("AUTO_SEND_ENABLED", "false").lower() == "true"
+AUTO_SEND_INTERVAL_SEC = int(os.getenv("AUTO_SEND_INTERVAL_SEC", "60"))
+AUTO_SEND_TEXT = os.getenv("AUTO_SEND_TEXT", "Hello from Cloud Run Functions! 🚀 (auto)")
 
 
 def send_slack(text: str):
@@ -31,6 +36,23 @@ def slack_notify(request):
         return {"status": "ok", "sent": text}, 200
     except Exception as exc:
         return {"status": "error", "error": str(exc)}, 500
+
+
+def _auto_loop():
+    """Background loop to send a Slack message periodically."""
+    while True:
+        try:
+            send_slack(AUTO_SEND_TEXT)
+        except Exception as exc:
+            # Log to stdout; Cloud Run captures logs
+            print(f"[auto-loop] error sending slack: {exc}", flush=True)
+        time.sleep(AUTO_SEND_INTERVAL_SEC)
+
+
+# Start background sender if enabled
+if AUTO_SEND_ENABLED:
+    t = threading.Thread(target=_auto_loop, name="auto-slack-loop", daemon=True)
+    t.start()
 
 
 if __name__ == "__main__":
