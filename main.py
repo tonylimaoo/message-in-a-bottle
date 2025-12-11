@@ -1,19 +1,19 @@
 """
-HTTP function for Cloud Functions/Cloud Run (Gen2) that posts a message to Slack.
+HTTP function for Cloud Run / Cloud Functions (Gen2) that posts a message to Slack.
 
-Entry point: slack_notify
+Entry point (FUNCTION_TARGET): slack_notify
 Handles GET (mensagem padrão) e POST com JSON {"text": "..."}.
 """
 
 import os
 import requests
 import functions_framework
-from functions_framework import create_app
 
 SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")
 
 
 def send_slack(text: str):
+    # Validate only when called
     if not SLACK_WEBHOOK or not SLACK_WEBHOOK.startswith("https://hooks.slack.com/"):
         raise ValueError("Configure a env SLACK_WEBHOOK com o webhook do Slack.")
     resp = requests.post(SLACK_WEBHOOK, json={"text": text}, timeout=10)
@@ -33,10 +33,9 @@ def slack_notify(request):
         return {"status": "error", "error": str(exc)}, 500
 
 
-# Create WSGI app so buildpack/gunicorn can serve it as `main:app`
-app = create_app("main.slack_notify")
-
-
 if __name__ == "__main__":
-    # Fallback if the buildpack runs `python main.py`
+    # Local/dev fallback: run the functions framework dev server
+    from functions_framework import create_app
+
+    app = create_app("main.slack_notify")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
