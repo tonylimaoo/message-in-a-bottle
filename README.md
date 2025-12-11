@@ -9,6 +9,8 @@ docker build -t message-in-a-bottle .
 docker run -d -p 8080:8080 \
   -e SLACK_WEBHOOK=https://hooks.slack.com/services/... \
   -e AUTO_SEND_ENABLED=true \
+  -e BQ_VIEW=barber-project-d75f8.teste_slack.calculo_outliers \
+  -e BQ_LOOKBACK_DAYS=10 \
   message-in-a-bottle
 # health check (does not send)
 curl http://localhost:8080/
@@ -21,6 +23,8 @@ docker run -d -p 8080:8080 \
   -e AUTO_SEND_ENABLED=true \
   -e AUTO_SEND_INTERVAL_SEC=60 \
   -e AUTO_SEND_TEXT="Ping automático" \
+  -e BQ_VIEW=barber-project-d75f8.teste_slack.calculo_outliers \
+  -e BQ_LOOKBACK_DAYS=10 \
   message-in-a-bottle
 ```
 
@@ -31,7 +35,7 @@ gcloud run deploy message-in-a-bottle \
   --image gcr.io/PROJECT_ID/message-in-a-bottle \
   --region us-east1 \
   --allow-unauthenticated \
-  --set-env-vars SLACK_WEBHOOK=https://hooks.slack.com/services/...,FUNCTION_TARGET=slack_notify,FUNCTION_SIGNATURE_TYPE=http,AUTO_SEND_ENABLED=true
+  --set-env-vars SLACK_WEBHOOK=https://hooks.slack.com/services/...,FUNCTION_TARGET=slack_notify,FUNCTION_SIGNATURE_TYPE=http,AUTO_SEND_ENABLED=true,BQ_VIEW=barber-project-d75f8.teste_slack.calculo_outliers,BQ_LOOKBACK_DAYS=10
 ```
 
 ## Environment variables
@@ -39,6 +43,8 @@ gcloud run deploy message-in-a-bottle \
 - `AUTO_SEND_ENABLED` (default `true`): `true` to start background loop.
 - `AUTO_SEND_INTERVAL_SEC` (default `60`): interval in seconds for auto loop.
 - `AUTO_SEND_TEXT` (default "Hello from Cloud Run Functions! 🚀 (auto)"): text sent by the loop.
+- `BQ_VIEW` (default `barber-project-d75f8.teste_slack.calculo_outliers`): view to query.
+- `BQ_LOOKBACK_DAYS` (default `10`): days to look back when fetching outliers.
 
 ## HTTP usage
 - `GET /` → health/status only (no message is sent).
