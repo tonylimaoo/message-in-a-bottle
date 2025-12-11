@@ -41,7 +41,8 @@ def fetch_outliers():
     sql = f"""
     SELECT *
     FROM `{BQ_VIEW}`
-    WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL @days DAY)
+    WHERE date BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL @days DAY)
+                 AND DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
     ORDER BY date DESC
     """
     job_config = bigquery.QueryJobConfig(
