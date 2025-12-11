@@ -12,7 +12,7 @@ import threading
 import time
 
 SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")
-AUTO_SEND_ENABLED = os.getenv("AUTO_SEND_ENABLED", "false").lower() == "true"
+AUTO_SEND_ENABLED = os.getenv("AUTO_SEND_ENABLED", "true").lower() == "true"
 AUTO_SEND_INTERVAL_SEC = int(os.getenv("AUTO_SEND_INTERVAL_SEC", "60"))
 AUTO_SEND_TEXT = os.getenv("AUTO_SEND_TEXT", "Hello from Cloud Run Functions! 🚀 (auto)")
 
@@ -28,14 +28,8 @@ def send_slack(text: str):
 
 @functions_framework.http
 def slack_notify(request):
-    body = request.get_json(silent=True) or {}
-    custom_text = body.get("text") if isinstance(body, dict) else None
-    text = custom_text or "Hello from Cloud Run Functions! 🚀"
-    try:
-        send_slack(text)
-        return {"status": "ok", "sent": text}, 200
-    except Exception as exc:
-        return {"status": "error", "error": str(exc)}, 500
+    """Health endpoint only; sending is driven by the background loop."""
+    return {"status": "alive", "auto_send_enabled": AUTO_SEND_ENABLED}, 200
 
 
 def _auto_loop():
