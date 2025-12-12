@@ -17,7 +17,7 @@ AUTO_SEND_ENABLED = os.getenv("AUTO_SEND_ENABLED", "true").lower() == "true"
 AUTO_SEND_INTERVAL_SEC = int(os.getenv("AUTO_SEND_INTERVAL_SEC", "60"))
 AUTO_SEND_TEXT = os.getenv("AUTO_SEND_TEXT", "Hello from Cloud Run Functions! 🚀 (auto)")
 BQ_VIEW = os.getenv("BQ_VIEW", "barber-project-d75f8.teste_slack.calculo_outliers")
-BQ_LOOKBACK_DAYS = int(os.getenv("BQ_LOOKBACK_DAYS", "10"))
+BQ_LOOKBACK_DAYS = int(os.getenv("BQ_LOOKBACK_DAYS", "10"))  # unused now; kept for compatibility
 
 
 def send_slack(text: str):
@@ -41,33 +41,27 @@ def fetch_outliers():
     sql = f"""
     SELECT *
     FROM `{BQ_VIEW}`
-    WHERE date BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL @days DAY)
-                 AND DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+    WHERE date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
     ORDER BY date DESC
     """
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter("days", "INT64", BQ_LOOKBACK_DAYS)
-        ]
-    )
-    rows = client.query(sql, job_config=job_config).result()
+    rows = client.query(sql).result()
     schema_fields = [f.name for f in rows.schema]
     flag_cols = [c for c in schema_fields if c.startswith("is_outlier_")]
     results = []
     for row in rows:
         metrics = [c.replace("is_outlier_", "") for c in flag_cols if getattr(row, c)]
         if metrics:
-            results.append({"date": row.date, "metrics": metrics})
+            results.append({"date": row.date, "origem": row.origem, "metrics": metrics})
     return results
 
 
 def format_outlier_message(outliers):
     if not outliers:
-        return f"Nenhum outlier nos últimos {BQ_LOOKBACK_DAYS} dias."
-    lines = [f"Outliers (últimos {BQ_LOOKBACK_DAYS} dias):"]
+        return "Nenhum outlier no dia anterior."
+    lines = ["Outliers (ontem):"]
     for item in outliers:
         metrics_list = ", ".join(item["metrics"])
-        lines.append(f"- {item['date']}: {metrics_list}")
+        lines.append(f"- {item['date']} | {item['origem']}: {metrics_list}")
     return "\n".join(lines)
 
 
