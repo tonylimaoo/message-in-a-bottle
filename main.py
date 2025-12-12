@@ -70,13 +70,18 @@ def format_outlier_message(outliers):
     # All rows are for yesterday; capture the date from the first item
     ref_date = outliers[0]["date"]
     date_str = ref_date.strftime("%d/%m/%Y") if hasattr(ref_date, "strftime") else str(ref_date)
-    lines = [f"Outliers ({date_str}):", "origem | métrica | direção | ratio"]
+    # Agrupa métricas por origem para facilitar leitura
+    grouped = {}
     for item in outliers:
-        for m in item["metrics"]:
+        grouped.setdefault(item["origem"], []).extend(item["metrics"])
+
+    lines = [f"Outliers ({date_str}):"]
+    for origem in sorted(grouped.keys()):
+        lines.append(f"- {origem}:")
+        for m in grouped[origem]:
             ratio_txt = f"{m['ratio']:.3f}" if isinstance(m["ratio"], (int, float)) else "n/a"
-            lines.append(
-                f"{item['origem']} | {m['metric']} | {m['direction']} | {ratio_txt}"
-            )
+            arrow = "🔺" if m["direction"] == "up" else "🔻"
+            lines.append(f"    {arrow} {m['metric']} (ratio {ratio_txt})")
     return "\n".join(lines)
 
 
