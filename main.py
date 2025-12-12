@@ -49,7 +49,16 @@ def fetch_outliers():
     flag_cols = [c for c in schema_fields if c.startswith("is_outlier_")]
     results = []
     for row in rows:
-        metrics = [c.replace("is_outlier_", "") for c in flag_cols if getattr(row, c)]
+        metrics = []
+        for c in flag_cols:
+            if getattr(row, c):
+                metric = c.replace("is_outlier_", "")
+                ratio_col = f"ratio_{metric}"
+                ratio_val = getattr(row, ratio_col, None)
+                direction = "up" if ratio_val is not None and ratio_val > 1 else "down"
+                metrics.append(
+                    {"metric": metric, "ratio": ratio_val, "direction": direction}
+                )
         if metrics:
             results.append({"date": row.date, "origem": row.origem, "metrics": metrics})
     return results
@@ -58,10 +67,13 @@ def fetch_outliers():
 def format_outlier_message(outliers):
     if not outliers:
         return "Nenhum outlier no dia anterior."
-    lines = ["Outliers (ontem):"]
+    lines = ["Outliers (ontem):", "origem | métrica | direção | ratio"]
     for item in outliers:
-        metrics_list = ", ".join(item["metrics"])
-        lines.append(f"- {item['date']} | {item['origem']}: {metrics_list}")
+        for m in item["metrics"]:
+            ratio_txt = f"{m['ratio']:.3f}" if isinstance(m["ratio"], (int, float)) else "n/a"
+            lines.append(
+                f"{item['origem']} | {m['metric']} | {m['direction']} | {ratio_txt}"
+            )
     return "\n".join(lines)
 
 
