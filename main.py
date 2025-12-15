@@ -6,18 +6,27 @@ Handles GET (mensagem padrão) e POST with JSON {"text": "..."}.
 """
 
 import os
-import requests
+import json
+import requests  # kept for compatibility; no direct Slack send now
 import functions_framework
 import threading
 import time
 from google.cloud import bigquery
+from google.cloud import pubsub_v1
 
-SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")
+# Env vars
+SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")  # not used anymore; kept for compatibility
 AUTO_SEND_ENABLED = os.getenv("AUTO_SEND_ENABLED", "true").lower() == "true"
 AUTO_SEND_INTERVAL_SEC = int(os.getenv("AUTO_SEND_INTERVAL_SEC", "60"))
 AUTO_SEND_TEXT = os.getenv("AUTO_SEND_TEXT", "Hello from Cloud Run Functions! 🚀 (auto)")
 BQ_VIEW = os.getenv("BQ_VIEW", "barber-project-d75f8.teste_slack.calculo_outliers")
 BQ_LOOKBACK_DAYS = int(os.getenv("BQ_LOOKBACK_DAYS", "10"))  # unused now; kept for compatibility
+PUBSUB_TOPIC = os.getenv("PUBSUB_TOPIC") or os.getenv("send-alert-topic-name")
+GCP_PROJECT_ID = (
+    os.getenv("gcp-project-id")
+    or os.getenv("GCP_PROJECT_ID")
+    or os.getenv("GOOGLE_CLOUD_PROJECT")
+)
 
 
 def send_slack(text: str):
@@ -85,13 +94,57 @@ def format_outlier_message(outliers):
     return "\n".join(lines)
 
 
+def build_payload(outliers):
+    """Builds a JSON-serializable payload to publish to Pub/Sub."""
+    if not outliers:
+        return {
+            "entidade": "Outliers Diario",
+            "data_referencia": None,
+            "outliers": [],
+            "resumo": "Nenhum outlier no dia anterior.",
+        }
+    ref_date = outliers[0]["date"]
+    date_str = ref_date.strftime("%d/%m/%Y") if hasattr(ref_date, "strftime") else str(ref_date)
+    payload_outliers = []
+    for item in outliers:
+        payload_outliers.append(
+            {
+                "origem": item["origem"],
+                "metricas": [
+                    {"nome": m["metric"], "direcao": m["direction"], "ratio": m["ratio"]}
+                    for m in item["metrics"]
+                ],
+            }
+        )
+    resumo = format_outlier_message(outliers)
+    return {
+        "entidade": "Outliers Diario",
+        "data_referencia": date_str,
+        "outliers": payload_outliers,
+        "resumo": resumo,
+    }
+
+
+def publish_to_pubsub(payload: dict):
+    """Publish JSON payload to Pub/Sub topic."""
+    if not PUBSUB_TOPIC or not GCP_PROJECT_ID:
+        raise ValueError("PUBSUB_TOPIC ou GCP_PROJECT_ID não configurado.")
+    publisher = pubsub_v1.PublisherClient()
+    topic_path = publisher.topic_path(GCP_PROJECT_ID, PUBSUB_TOPIC)
+    data_bytes = json.dumps(payload).encode("utf-8")
+    future = publisher.publish(topic_path, data=data_bytes)
+    msg_id = future.result()
+    print(f"Payload publicado no Pub/Sub (topic={PUBSUB_TOPIC}, msg_id={msg_id})")
+    return msg_id
+
+
 def _auto_loop():
     """Background loop to send a Slack message periodically."""
     while True:
         try:
             outliers = fetch_outliers()
-            text = format_outlier_message(outliers)
-            send_slack(text)
+            payload = build_payload(outliers)
+            publish_to_pubsub(payload)
         except Exception as exc:
             # Log to stdout; Cloud Run captures logs
             print(f"[auto-loop] error sending slack: {exc}", flush=True)
