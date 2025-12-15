@@ -15,7 +15,6 @@ from google.cloud import bigquery
 from google.cloud import pubsub_v1
 
 # Env vars
-SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")  # not used anymore; kept for compatibility
 AUTO_SEND_ENABLED = os.getenv("AUTO_SEND_ENABLED", "true").lower() == "true"
 AUTO_SEND_INTERVAL_SEC = int(os.getenv("AUTO_SEND_INTERVAL_SEC", "60"))
 AUTO_SEND_TEXT = os.getenv("AUTO_SEND_TEXT", "Hello from Cloud Run Functions! 🚀 (auto)")
@@ -27,15 +26,7 @@ GCP_PROJECT_ID = (
     or os.getenv("GCP_PROJECT_ID")
     or os.getenv("GOOGLE_CLOUD_PROJECT")
 )
-
-
-def send_slack(text: str):
-    # Validate only when called
-    if not SLACK_WEBHOOK or not SLACK_WEBHOOK.startswith("https://hooks.slack.com/"):
-        raise ValueError("Configure a env SLACK_WEBHOOK com o webhook do Slack.")
-    resp = requests.post(SLACK_WEBHOOK, json={"text": text}, timeout=10)
-    resp.raise_for_status()
-    return resp.text
+DESTINATION_EMAIL = os.getenv("DESTINATION_EMAIL") or os.getenv("destination-email")
 
 
 @functions_framework.http
@@ -95,40 +86,54 @@ def format_outlier_message(outliers):
 
 
 def build_payload(outliers):
-    """Builds a JSON-serializable payload to publish to Pub/Sub."""
+    """Build payload expected by the email-sender function."""
+    ref_date = outliers[0]["date"] if outliers else None
+    date_str = ref_date.strftime("%d/%m/%Y") if ref_date and hasattr(ref_date, "strftime") else None
+
     if not outliers:
+        subject = f"✅ Outliers: nenhum item - {date_str or 'ontem'}"
+        html = f"<h3>{subject}</h3><p style='color:green;'>Sem outliers para o dia anterior.</p>"
         return {
+            "lista_email": DESTINATION_EMAIL,
+            "descricao_curta": subject,
+            "descricao_completa": html,
             "entidade": "Outliers Diario",
-            "data_referencia": None,
-            "outliers": [],
-            "resumo": "Nenhum outlier no dia anterior.",
+            "severidade": "Info",
         }
-    ref_date = outliers[0]["date"]
-    date_str = ref_date.strftime("%d/%m/%Y") if hasattr(ref_date, "strftime") else str(ref_date)
-    payload_outliers = []
+
+    total_regs = sum(len(item["metrics"]) for item in outliers)
+    subject = f"🚨 Outliers: {total_regs} sinalizações - {date_str}"
+    html_parts = [f"<h3>{subject}</h3>"]
+    html_parts.append(
+        "<table border='1' cellpadding='6' style='border-collapse:collapse;'>"
+        "<tr style='background:#f2f2f2; text-align:left'>"
+        "<th>Origem</th><th>Métrica</th><th>Direção</th><th>Ratio</th>"
+        "</tr>"
+    )
     for item in outliers:
-        payload_outliers.append(
-            {
-                "origem": item["origem"],
-                "metricas": [
-                    {"nome": m["metric"], "direcao": m["direction"], "ratio": m["ratio"]}
-                    for m in item["metrics"]
-                ],
-            }
-        )
-    resumo = format_outlier_message(outliers)
+        for m in item["metrics"]:
+            arrow = "🔺" if m["direction"] == "up" else "🔻"
+            ratio_txt = f"{m['ratio']:.3f}" if isinstance(m["ratio"], (int, float)) else "n/a"
+            html_parts.append(
+                f"<tr><td>{item['origem']}</td><td>{m['metric']}</td>"
+                f"<td>{arrow} {m['direction']}</td><td>{ratio_txt}</td></tr>"
+            )
+    html_parts.append("</table>")
+    html = "".join(html_parts)
+
     return {
+        "lista_email": DESTINATION_EMAIL,
+        "descricao_curta": subject,
+        "descricao_completa": html,
         "entidade": "Outliers Diario",
-        "data_referencia": date_str,
-        "outliers": payload_outliers,
-        "resumo": resumo,
+        "severidade": "Error",
     }
 
 
 def publish_to_pubsub(payload: dict):
     """Publish JSON payload to Pub/Sub topic."""
-    if not PUBSUB_TOPIC or not GCP_PROJECT_ID:
-        raise ValueError("PUBSUB_TOPIC ou GCP_PROJECT_ID não configurado.")
+    if not PUBSUB_TOPIC or not GCP_PROJECT_ID or not DESTINATION_EMAIL:
+        raise ValueError("PUBSUB_TOPIC, GCP_PROJECT_ID ou DESTINATION_EMAIL não configurado.")
     publisher = pubsub_v1.PublisherClient()
     topic_path = publisher.topic_path(GCP_PROJECT_ID, PUBSUB_TOPIC)
     data_bytes = json.dumps(payload).encode("utf-8")
