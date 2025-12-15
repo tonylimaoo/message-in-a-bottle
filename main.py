@@ -2,7 +2,7 @@
 HTTP function for Cloud Run / Cloud Functions (Gen2) that posts a message to Slack.
 
 Entry point (FUNCTION_TARGET): slack_notify
-Handles GET (mensagem padrão) e POST with JSON {"text": "..."}.
+Handles GET (mensagem padrão) and POST with JSON {"text": "..."}.
 """
 
 import os
@@ -47,6 +47,19 @@ def fetch_outliers():
     rows = client.query(sql).result()
     schema_fields = [f.name for f in rows.schema]
     flag_cols = [c for c in schema_fields if c.startswith("is_outlier_")]
+    # detect possible origem field
+    origem_field_candidates = [
+        "origem",
+        "origem_midia",
+        "origem_midias",
+        "midia",
+        "canal",
+        "source",
+    ]
+    origem_field = next((c for c in origem_field_candidates if c in schema_fields), None)
+    if origem_field is None and schema_fields:
+        origem_field = schema_fields[0]  # fallback to first column to avoid crash
+
     results = []
     for row in rows:
         metrics = []
@@ -60,7 +73,8 @@ def fetch_outliers():
                     {"metric": metric, "ratio": ratio_val, "direction": direction}
                 )
         if metrics:
-            results.append({"date": row.date, "origem": row.origem, "metrics": metrics})
+            origem_val = getattr(row, origem_field, "desconhecido")
+            results.append({"date": row.date, "origem": origem_val, "metrics": metrics})
     return results
 
 
