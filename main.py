@@ -1,13 +1,13 @@
 """
-HTTP function for Cloud Run / Cloud Functions (Gen2) that posts a message to Slack.
+HTTP function for Cloud Run / Cloud Functions (Gen2) that lê outliers no BigQuery
+ e publica um payload no Pub/Sub para outra função enviar alerta (e-mail/Slack).
 
 Entry point (FUNCTION_TARGET): slack_notify
-Handles GET (mensagem padrão) and POST with JSON {"text": "..."}.
+Health-only endpoint; envio ocorre no loop em background.
 """
 
 import os
 import json
-import requests  # kept for compatibility; no direct Slack send now
 import functions_framework
 import threading
 import time
@@ -36,7 +36,7 @@ def slack_notify(request):
 
 
 def fetch_outliers():
-    """Query BigQuery view for outliers in the lookback window."""
+    """Query BigQuery view for outliers (dia anterior)."""
     client = bigquery.Client()
     sql = f"""
     SELECT *
@@ -47,19 +47,6 @@ def fetch_outliers():
     rows = client.query(sql).result()
     schema_fields = [f.name for f in rows.schema]
     flag_cols = [c for c in schema_fields if c.startswith("is_outlier_")]
-    # detect possible origem field
-    origem_field_candidates = [
-        "origem",
-        "origem_midia",
-        "origem_midias",
-        "midia",
-        "canal",
-        "source",
-    ]
-    origem_field = next((c for c in origem_field_candidates if c in schema_fields), None)
-    if origem_field is None and schema_fields:
-        origem_field = schema_fields[0]  # fallback to first column to avoid crash
-
     results = []
     for row in rows:
         metrics = []
@@ -73,18 +60,15 @@ def fetch_outliers():
                     {"metric": metric, "ratio": ratio_val, "direction": direction}
                 )
         if metrics:
-            origem_val = getattr(row, origem_field, "desconhecido")
-            results.append({"date": row.date, "origem": origem_val, "metrics": metrics})
+            results.append({"date": row.date, "origem": row.origem, "metrics": metrics})
     return results
 
 
 def format_outlier_message(outliers):
     if not outliers:
         return "Nenhum outlier no dia anterior."
-    # All rows are for yesterday; capture the date from the first item
     ref_date = outliers[0]["date"]
     date_str = ref_date.strftime("%d/%m/%Y") if hasattr(ref_date, "strftime") else str(ref_date)
-    # Agrupa métricas por origem para facilitar leitura
     grouped = {}
     for item in outliers:
         grouped.setdefault(item["origem"], []).extend(item["metrics"])
@@ -100,7 +84,7 @@ def format_outlier_message(outliers):
 
 
 def build_payload(outliers):
-    """Build payload expected by the email-sender function."""
+    """Payload no formato esperado pelo sender de e-mail."""
     ref_date = outliers[0]["date"] if outliers else None
     date_str = ref_date.strftime("%d/%m/%Y") if ref_date and hasattr(ref_date, "strftime") else None
 
@@ -158,26 +142,24 @@ def publish_to_pubsub(payload: dict):
 
 
 def _auto_loop():
-    """Background loop to send a Slack message periodically."""
+    """Background loop to publish payload periodically."""
     while True:
         try:
             outliers = fetch_outliers()
             payload = build_payload(outliers)
             publish_to_pubsub(payload)
         except Exception as exc:
-            # Log to stdout; Cloud Run captures logs
-            print(f"[auto-loop] error sending slack: {exc}", flush=True)
+            print(f"[auto-loop] error: {exc}", flush=True)
         time.sleep(AUTO_SEND_INTERVAL_SEC)
 
 
 # Start background sender if enabled
 if AUTO_SEND_ENABLED:
-    t = threading.Thread(target=_auto_loop, name="auto-slack-loop", daemon=True)
+    t = threading.Thread(target=_auto_loop, name="auto-pubsub-loop", daemon=True)
     t.start()
 
 
 if __name__ == "__main__":
-    # Local/dev fallback: run the functions framework dev server
     from functions_framework import create_app
 
     app = create_app("main.slack_notify")
